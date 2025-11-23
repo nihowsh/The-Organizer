@@ -7,22 +7,16 @@
   "battleChannels": [],
   "organizerRoleIds": [],
   "roundReplyTimeoutHours": 24,
-
+  "voteDurationMinutes": 60,
   "image": {
-    "width": 1800,
-    "height": 1200,
-    "margin": 40,
-    "bgColor": "#111111",
-    "lineColor": "#ffffff",
+    "width": 1400,
+    "height": 900,
+    "bgColor": "#2a0710",
     "textColor": "#ffffff",
-    "font": "32px Sans",
-    "roundGap": 200,
-    "matchGap": 80,
-    "slotHeight": 45,
-    "slotPadding": 10,
     "prelimColor": "#8844ff"
   }
 }
+
 
 
 

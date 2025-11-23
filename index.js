@@ -1,5 +1,8 @@
 // index.js
+// AUTO-SLASH-COMMAND DEPLOY + Tournament Bot
 require('dotenv').config();
+
+const { REST, Routes } = require('discord.js'); // for auto-deploy
 const fs = require('fs-extra');
 const path = require('path');
 const express = require('express');
@@ -11,6 +14,62 @@ const STORAGE_PATH = path.join(__dirname, 'storage.json');
 
 const config = fs.existsSync(CONFIG_PATH) ? fs.readJsonSync(CONFIG_PATH) : {};
 const storage = fs.existsSync(STORAGE_PATH) ? fs.readJsonSync(STORAGE_PATH) : { tournaments: {} };
+
+// ---------- AUTO DEPLOY SLASH COMMANDS ----------
+const commands = [
+  {
+    name: 'register',
+    description: 'Register for the next tournament'
+  },
+  {
+    name: 'unregister',
+    description: 'Unregister from the tournament'
+  },
+  {
+    name: 'start_tournament',
+    description: 'Start the tournament (organizer only)'
+  },
+  {
+    name: 'show_bracket',
+    description: 'Show bracket image'
+  },
+  {
+    name: 'set_winner',
+    description: 'Set winner for a match (organizer only)',
+    options: [
+      { name: 'match_id', description: 'Match ID', type: 3, required: true },
+      { name: 'winner', description: 'p1 or p2', type: 3, required: true }
+    ]
+  }
+];
+
+async function autoDeployCommands() {
+  const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
+  try {
+    console.log('Auto-deploying slash commands...');
+    if (process.env.GUILD_ID && process.env.CLIENT_ID) {
+      await rest.put(
+        Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+        { body: commands }
+      );
+      console.log('✓ Guild commands deployed instantly.');
+    } else if (process.env.CLIENT_ID) {
+      await rest.put(
+        Routes.applicationCommands(process.env.CLIENT_ID),
+        { body: commands }
+      );
+      console.log('✓ Global commands deployed. (Can take 30–60 min)');
+    } else {
+      console.warn('CLIENT_ID missing — cannot deploy commands. Set CLIENT_ID in .env');
+    }
+  } catch (err) {
+    console.error('Failed to deploy slash commands:', err);
+  }
+}
+
+// call deploy but don't block boot if it fails
+autoDeployCommands();
+// ---------- END AUTO DEPLOY ----------
 
 // simple in-memory timers map { timerId: NodeTimeout }
 const timers = new Map();
@@ -535,3 +594,4 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Keep-alive server listening on ${port}`));
 
 client.login(process.env.BOT_TOKEN);
+

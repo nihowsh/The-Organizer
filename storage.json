@@ -3,26 +3,6 @@
     "currentTournament": null
   },
   "tournaments": {
-    "example": {
-      "id": "example",
-      "name": "Example Tournament",
-      "status": "registration",
-      "participants": [],
-      "rounds": [],
-      "size": 0,
-      "registrationMessageId": null,
-      "bracketMessageId": null,
-      "channels": {
-        "bracket": "",
-        "registration": "",
-        "battleCategory": "",
-        "announce": "",
-        "vote": ""
-      },
-      "maxParticipants": 0,
-      "roundReplyTimeoutHours": 24,
-      "voteDurationMinutes": 1440,
-      "createdAt": 0
-    }
+
   }
 }

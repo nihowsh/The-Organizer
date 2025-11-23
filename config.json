@@ -1,22 +1,19 @@
 {
-  "bracketChannel": "",                   
-  "registrationChannel": "",              
-  "battleCategory": "",                   
-  "announcementChannel": "",              
-  "voteChannel": "",                      
+  "tournamentName": "My Tournament",
+  "announcementChannel": "",
+  "battleCategory": "",
+  "votingChannel": "",
+  "bracketChannel": "",
+  "organizerRoles": [],
 
-  "battleChannels": [],                   
-  "organizerRoleIds": [],                
-
-  "maxActiveBattles": 8,                  
-  "maxParticipants": 0,                   
-  "defaultVoteDurationMinutes": 60,       
-  "roundReplyTimeoutHours": 24,           
+  "roundReplyTimeoutHours": 24,
+  "defaultVoteDurationMinutes": 60,
 
   "image": {
-    "width": 1600,
-    "height": 900,
-    "backgroundImagePath": ""             
+    "width": 1700,
+    "height": 1000,
+    "backgroundImagePath": ""
   }
 }
+
 

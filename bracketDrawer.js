@@ -1,145 +1,86 @@
-const fs = require("fs");
-const path = require("path");
-const { createCanvas, loadImage } = require("canvas");
+// bracketDrawer.js
+const { createCanvas } = require('canvas');
 
-// Trim long names
-function trimName(name, max = 20) {
-  if (!name) return "—";
-  return name.length > max ? name.slice(0, max - 1) + "…" : name;
+function drawText(ctx, text, x, y) {
+  ctx.fillText(text, x, y);
 }
 
-// Compute label names per round index
-function roundLabel(roundIndex, totalRounds, hasPrelims) {
-  if (hasPrelims) {
-    if (roundIndex === 0) return "PRELIMS";
-    roundIndex -= 1;
-  }
+function drawMatchBox(ctx, x, y, width, height, color, textColor, p1, p2, id) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x, y, width, height);
 
-  const remaining = totalRounds - (roundIndex + 1);
-  const sizes = ["Final", "Semifinal", "Quarterfinal", "Round of 16", "Round of 32", "Round of 64", "Round of 128"];
-  return sizes[remaining] || `Round ${roundIndex + 1}`;
+  ctx.fillStyle = textColor;
+  ctx.font = "24px Sans";
+
+  const t1 = p1 ? p1.name : "TBD";
+  const t2 = p2 ? p2.name : "TBD";
+
+  ctx.fillText(id, x + 10, y + 25);
+  ctx.fillText(t1, x + 10, y + 55);
+  ctx.fillText(t2, x + 10, y + 85);
 }
 
-async function drawBracketImage(tournament, cfg = {}) {
+function drawBracketImage(tournament, cfg = {}) {
+  const width = cfg.width || 1600;
+  const height = cfg.height || 1000;
+
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+
+  // background
+  ctx.fillStyle = cfg.bgColor || "#111";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = cfg.textColor || "white";
+  ctx.font = cfg.font || "32px Sans";
+
   const rounds = tournament.rounds || [];
-  const hasPrelims = rounds.length > 0 && rounds[0].isPrelim === true;
+  const margin = cfg.margin || 40;
+  const roundGap = cfg.roundGap || 210;
+  const matchGap = cfg.matchGap || 90;
+  const matchWidth = 180;
+  const matchHeight = 110;
 
-  const canvasWidth = cfg.width || 1600;
-  const canvasHeight = cfg.height || 900;
+  let x = margin;
 
-  const canvas = createCanvas(canvasWidth, canvasHeight);
-  const ctx = canvas.getContext("2d");
+  // draw each round
+  rounds.forEach((round, roundIndex) => {
+    const isPrelim = !!round.isPrelim;
 
-  // Background
-  if (cfg.backgroundImagePath && fs.existsSync(cfg.backgroundImagePath)) {
-    const img = await loadImage(cfg.backgroundImagePath);
-    ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
-  } else {
-    const grad = ctx.createLinearGradient(0, 0, 0, canvasHeight);
-    grad.addColorStop(0, "#4b0212");
-    grad.addColorStop(0.5, "#7b0220");
-    grad.addColorStop(1, "#250008");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-  }
+    const matches = round.matches;
+    const totalHeight = matches.length * (matchHeight + matchGap) - matchGap;
+    let y = (height - totalHeight) / 2;
 
-  // Header
-  ctx.fillStyle = "#fff";
-  ctx.font = "bold 42px Sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(tournament.name || "TOURNAMENT", canvasWidth / 2, 60);
-  ctx.font = "20px Sans-serif";
-  ctx.fillText("LIVE BRACKET", canvasWidth / 2, 95);
+    ctx.fillStyle = isPrelim ? (cfg.prelimColor || "#bb55ff") : (cfg.textColor || "white");
+    ctx.font = "36px Sans";
 
-  // Layout
-  const totalRounds = rounds.length;
-  const columnWidth = canvasWidth / (totalRounds + 1);
+    ctx.fillText(isPrelim ? "PRELIMS" : `ROUND ${roundIndex}`, x, margin);
 
-  for (let r = 0; r < totalRounds; r++) {
-    const round = rounds[r];
-    const xCenter = columnWidth * (r + 0.8);
+    matches.forEach((m) => {
+      const boxColor = isPrelim ? (cfg.prelimColor || "#bb55ff") : (cfg.lineColor || "white");
 
-    // Round title
-    ctx.fillStyle = "#ffd7e0";
-    ctx.font = "18px Sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText(roundLabel(r, totalRounds, hasPrelims), xCenter - 20, 140);
+      drawMatchBox(
+        ctx,
+        x,
+        y,
+        matchWidth,
+        matchHeight,
+        boxColor,
+        cfg.textColor || "white",
+        m.p1,
+        m.p2,
+        m.id
+      );
 
-    const topOffset = 160;
-    const usableHeight = canvasHeight - topOffset - 60;
-    const spacing = usableHeight / round.matches.length;
+      y += matchHeight + matchGap;
+    });
 
-    for (let m = 0; m < round.matches.length; m++) {
-      const match = round.matches[m];
-      const centerY = topOffset + m * spacing + spacing / 2;
+    x += matchWidth + roundGap;
+  });
 
-      const boxW = 260;
-      const boxH = 46;
-
-      const x = xCenter - boxW / 2;
-      const y = centerY - boxH;
-
-      // Panel
-      ctx.fillStyle = "rgba(95,5,24,0.85)";
-      roundRect(ctx, x, y, boxW, boxH * 2 + 8, 10);
-      ctx.fill();
-
-      // Border
-      ctx.strokeStyle = "#b36b6f";
-      ctx.lineWidth = 2;
-      roundRect(ctx, x, y, boxW, boxH * 2 + 8, 10);
-      ctx.stroke();
-
-      // Players
-      ctx.fillStyle = "#fff";
-      ctx.font = "16px Sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText(trimName(match.p1?.name || "—"), x + 12, y + 22);
-      ctx.fillText(trimName(match.p2?.name || "—"), x + 12, y + boxH + 22);
-
-      // Winner highlight
-      if (match.winner) {
-        ctx.strokeStyle = "#ffd36a";
-        ctx.lineWidth = 3;
-        const winLineY = match.winner === "p1" ? y + 14 : y + boxH + 14;
-        ctx.beginPath();
-        ctx.moveTo(x + 8, winLineY);
-        ctx.lineTo(x + boxW - 8, winLineY);
-        ctx.stroke();
-      }
-
-      // Connector to next round
-      if (r < totalRounds - 1) {
-        const nextXCenter = columnWidth * (r + 1.5);
-        const nextY = topOffset + Math.floor(m / 2) * (spacing * 2) + spacing;
-        ctx.strokeStyle = "rgba(255,154,179,0.9)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x + boxW, y + boxH);
-        ctx.lineTo(nextXCenter - boxW / 2, nextY);
-        ctx.stroke();
-      }
-    }
-  }
-
-  return canvas.toBuffer("image/png");
-}
-
-// Rounded rectangle helper
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
+  return canvas.toBuffer();
 }
 
 module.exports = { drawBracketImage };
 
-};

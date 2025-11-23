@@ -1,46 +1,70 @@
 // index.js
-// AUTO-SLASH-COMMAND DEPLOY + Tournament Bot
 require('dotenv').config();
-
-const { REST, Routes } = require('discord.js'); // for auto-deploy
 const fs = require('fs-extra');
 const path = require('path');
 const express = require('express');
-const { Client, GatewayIntentBits, Partials, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
-const { drawBracketImage } = require('./bracketDrawer');
+const { REST, Routes, Client, GatewayIntentBits, Partials, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
+const { drawBracketImage } = require('./bracketDrawer'); // keep your bracket generator
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const STORAGE_PATH = path.join(__dirname, 'storage.json');
 
 const config = fs.existsSync(CONFIG_PATH) ? fs.readJsonSync(CONFIG_PATH) : {};
+// ensure defaults
+config.battleChannels = config.battleChannels || [];
+config.organizerRoleIds = config.organizerRoleIds || [];
+
 const storage = fs.existsSync(STORAGE_PATH) ? fs.readJsonSync(STORAGE_PATH) : { tournaments: {} };
+
+function saveConfig() { fs.writeJsonSync(CONFIG_PATH, config, { spaces: 2 }); }
+function saveStorage() { fs.writeJsonSync(STORAGE_PATH, storage, { spaces: 2 }); }
 
 // ---------- AUTO DEPLOY SLASH COMMANDS ----------
 const commands = [
-  {
-    name: 'register',
-    description: 'Register for the next tournament'
-  },
-  {
-    name: 'unregister',
-    description: 'Unregister from the tournament'
-  },
-  {
-    name: 'start_tournament',
-    description: 'Start the tournament (organizer only)'
-  },
-  {
-    name: 'show_bracket',
-    description: 'Show bracket image'
-  },
-  {
-    name: 'set_winner',
-    description: 'Set winner for a match (organizer only)',
-    options: [
-      { name: 'match_id', description: 'Match ID', type: 3, required: true },
-      { name: 'winner', description: 'p1 or p2', type: 3, required: true }
-    ]
-  }
+  { name: 'register', description: 'Register for the next tournament (legacy)' },
+  { name: 'unregister', description: 'Unregister from the tournament (legacy)' },
+  { name: 'start_tournament', description: 'Start the tournament (organizer only) (legacy)' },
+  { name: 'show_bracket', description: 'Show bracket image' },
+  { name: 'set_winner', description: 'Set winner for a match (organizer only)', options:[
+      { name:'match_id', description:'Match ID', type:3, required:true},
+      { name:'winner', description:'p1 or p2', type:3, required:true}
+    ]},
+  { name: 'create_tournament', description: 'Create a new tournament (organizer only)', options:[
+      { name:'name', description:'Tournament name', type:3, required:true},
+      { name:'bracket_channel', description:'Bracket channel ID', type:3, required:false},
+      { name:'registration_channel', description:'Registration channel ID', type:3, required:false},
+      { name:'battle_category', description:'Category ID for battles', type:3, required:false},
+      { name:'announce_channel', description:'Announcement channel ID', type:3, required:false},
+      { name:'vote_channel', description:'Vote channel ID', type:3, required:false},
+      { name:'max_participants', description:'max participants (0=unlimited)', type:4, required:false}
+    ]},
+  { name: 'post_registration', description: 'Post registration embed (reaction-based)' },
+  { name: 'open_registration', description: 'Open registration for current tournament', options:[
+      { name:'tournament', description:'id or "current"', type:3, required:false }
+    ]},
+  { name: 'close_registration', description: 'Close registration and build bracket (organizer only)' },
+  { name: 'set_channels', description: 'Set default channels (organizer only)', options:[
+      { name:'bracket_channel', description:'Bracket channel ID', type:3, required:false},
+      { name:'registration_channel', description:'Registration channel ID', type:3, required:false},
+      { name:'battle_category', description:'Battle category ID', type:3, required:false},
+      { name:'announce_channel', description:'Announce channel ID', type:3, required:false},
+      { name:'vote_channel', description:'Vote channel ID', type:3, required:false}
+    ]},
+  { name: 'set_battle_channels', description: 'Set list of battle channels (comma separated IDs)', options:[
+      { name:'channels', description:'Comma separated channel IDs', type:3, required:true}
+    ]},
+  { name: 'set_organizer_roles', description: 'Set organizer role IDs (comma separated)', options:[
+      { name:'roles', description:'Comma separated role IDs', type:3, required:true}
+    ]},
+  { name: 'assign_fixtures', description: 'Assign round matches to battle channels and announce (organizer only)' },
+  { name: 'end_match', description: 'End a match and set winner (organizer only)', options:[
+      { name:'match_id', description:'Match ID', type:3, required:true},
+      { name:'winner', description:'p1 or p2', type:3, required:true}
+    ]},
+  { name: 'open_vote', description: 'Open vote for a match (organizer only)', options:[
+      { name:'match_id', description:'Match ID', type:3, required:true}
+    ]},
+  { name: 'force_update_bracket', description: 'Force update bracket image' }
 ];
 
 async function autoDeployCommands() {
@@ -48,234 +72,506 @@ async function autoDeployCommands() {
   try {
     console.log('Auto-deploying slash commands...');
     if (process.env.GUILD_ID && process.env.CLIENT_ID) {
-      await rest.put(
-        Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
-        { body: commands }
-      );
-      console.log('✓ Guild commands deployed instantly.');
+      await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
+      console.log('✓ Guild commands deployed.');
     } else if (process.env.CLIENT_ID) {
-      await rest.put(
-        Routes.applicationCommands(process.env.CLIENT_ID),
-        { body: commands }
-      );
-      console.log('✓ Global commands deployed. (Can take 30–60 min)');
-    } else {
-      console.warn('CLIENT_ID missing — cannot deploy commands. Set CLIENT_ID in .env');
-    }
+      await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+      console.log('✓ Global commands deployed.');
+    } else console.warn('CLIENT_ID missing - cannot deploy commands.');
   } catch (err) {
-    console.error('Failed to deploy slash commands:', err);
+    console.error('Failed to deploy commands', err);
   }
 }
-
-// call deploy but don't block boot if it fails
 autoDeployCommands();
-// ---------- END AUTO DEPLOY ----------
+// ---------- end deploy ----------
 
-// simple in-memory timers map { timerId: NodeTimeout }
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User] });
+
 const timers = new Map();
+const TOURNEY_ID = 'current';
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-  partials: [Partials.Channel]
-});
-
-const TOURNEY_ID = 'current'; // single active tournament; extendable
-
-// default tournament object in storage if absent
+// ensure a current tournament container exists
 if (!storage.tournaments[TOURNEY_ID]) {
   storage.tournaments[TOURNEY_ID] = {
+    id: TOURNEY_ID,
     name: 'Wordsmith of the Month',
-    status: 'registration', // registration | running | finished
-    participants: [], // { id, name, joinedAt }
+    status: 'registration',
+    participants: [],
     rounds: [],
     size: 0,
+    registrationMessageId: null,
     bracketMessageId: null,
+    channels: {
+      bracket: config.bracketChannel || '',
+      registration: config.registrationChannel || '',
+      battleCategory: config.battleCategory || '',
+      announce: config.announcementChannel || '',
+      vote: config.voteChannel || ''
+    },
+    maxParticipants: 0,
     createdAt: Date.now()
   };
-  fs.writeJsonSync(STORAGE_PATH, storage, { spaces: 2 });
+  saveStorage();
 }
 
-function saveStorage() {
-  fs.writeJsonSync(STORAGE_PATH, storage, { spaces: 2 });
-}
+// util
+function nextPowerOfTwo(n){ let p=1; while(p<n) p<<=1; return p; }
 
-// helper: create next power of two
-function nextPowerOfTwo(n) {
-  let p = 1;
-  while (p < n) p <<= 1;
-  return p;
-}
-
-/** Build initial bracket given participants (first-come-first-serve BYEs) */
+// buildInitialBracket and regenerateNextRounds kept same as your old logic
 function buildInitialBracket(tournament) {
-  const parts = tournament.participants.slice(); // in order
+  const parts = tournament.participants.slice();
   const N = parts.length;
   const P = nextPowerOfTwo(N);
   const byes = P - N;
-
-  // players who get byes are the earliest ones
   const byePlayers = parts.slice(0, byes);
   const playPlayers = parts.slice(byes);
-
-  // create slots array length P, fill with players or null
-  const slots = [];
-  // put byes first (they get onto slots), then the remaining
   const ordered = [...byePlayers, ...playPlayers];
-  for (let i = 0; i < P; i++) {
-    slots.push(ordered[i] || null);
-  }
-
-  // create first round matches (P/2)
+  const slots = [];
+  for (let i=0;i<P;i++) slots.push(ordered[i] || null);
   const firstRound = [];
-  for (let i = 0; i < P; i += 2) {
+  for (let i=0;i<P;i+=2) {
     const p1 = slots[i] ? { id: slots[i].id, name: slots[i].name } : null;
     const p2 = slots[i+1] ? { id: slots[i+1].id, name: slots[i+1].name } : null;
     firstRound.push({ id: `R1M${i/2+1}`, p1, p2, winner: null, status: 'pending' });
   }
-
-  // compute rounds array size = log2(P)
   const rounds = [firstRound];
   let prevCount = firstRound.length;
-  while (prevCount > 1) {
-    const nextCount = Math.ceil(prevCount / 2);
-    rounds.push(new Array(nextCount).fill(null).map((_, idx) => ({ id: `R${rounds.length+1}M${idx+1}`, p1: null, p2: null, winner: null, status: 'locked' })));
+  while(prevCount>1){
+    const nextCount = Math.ceil(prevCount/2);
+    rounds.push(new Array(nextCount).fill(null).map((_,idx)=>({ id:`R${rounds.length+1}M${idx+1}`, p1:null, p2:null, winner:null, status:'locked' })));
     prevCount = nextCount;
   }
-
   tournament.rounds = rounds;
   tournament.size = P;
 }
 
-// helper to regenerate later rounds from winners
 function regenerateNextRounds(tournament) {
   const rounds = tournament.rounds;
-  for (let r = 0; r < rounds.length - 1; r++) {
+  for (let r=0;r<rounds.length-1;r++){
     const curr = rounds[r];
     const next = rounds[r+1];
-    // fill next round slots from winners (or BYEs)
-    let idx = 0;
-    for (let i = 0; i < curr.length; i += 2) {
+    let idx=0;
+    for (let i=0;i<curr.length;i+=2){
       const m1 = curr[i];
       const m2 = curr[i+1];
-      const winner1 = m1 && m1.winner ? (m1.winner === 'p1' ? m1.p1 : m1.p2) : null;
-      const winner2 = m2 && m2.winner ? (m2.winner === 'p1' ? m2.p1 : m2.p2) : null;
+      const winner1 = m1 && m1.winner ? (m1.winner==='p1'?m1.p1:m1.p2) : null;
+      const winner2 = m2 && m2.winner ? (m2.winner==='p1'?m2.p1:m2.p2) : null;
       next[idx].p1 = winner1;
       next[idx].p2 = winner2;
-      // if any of p1/p2 present then unlock
       next[idx].status = (next[idx].p1 || next[idx].p2) ? 'pending' : 'locked';
       idx++;
     }
   }
 }
 
-// restore timers from storage on startup (for round deadlines)
-function restoreTimers() {
-  const t = storage.tournaments[TOURNEY_ID];
-  if (!t) return;
-  // scan all matches for timeouts stored in 'deadline' property (if used)
-  for (const round of t.rounds) {
-    for (const match of round) {
-      if (match && match.deadlineTs && !match.finished) {
-        const msLeft = match.deadlineTs - Date.now();
-        if (msLeft > 0) {
-          scheduleMatchTimeout(t, match, msLeft);
-        } else {
-          // timeout already expired while offline -> handle immediately
-          handleMatchTimeout(t, match);
-        }
-      }
-    }
-  }
+// registration helpers (reaction-based)
+async function postRegistrationEmbed(tournament) {
+  const chanId = tournament.channels.registration || config.registrationChannel || config.bracketChannel;
+  if (!chanId) throw new Error('No registration channel set');
+  const ch = await client.channels.fetch(chanId);
+  if (!ch) throw new Error('Registration channel not found');
+  const embed = {
+    title: `${tournament.name} — Registration`,
+    description: `React with ✅ to register.\nFirst-come-first-serve byes. Max: ${tournament.maxParticipants || 'Unlimited'}`,
+    fields: [{ name: `Participants (${tournament.participants.length})`, value: tournament.participants.map((p,i)=>`${i+1}. ${p.name}`).join('\n') || 'No participants yet' }],
+    timestamp: new Date()
+  };
+  const msg = await ch.send({ embeds: [embed] });
+  await msg.react('✅');
+  tournament.registrationMessageId = msg.id;
+  saveStorage();
+  return msg;
 }
 
-// schedule a match timeout (ms milliseconds)
-function scheduleMatchTimeout(tournament, match, ms) {
-  if (!match || !match.id) return;
-  // clear existing
-  if (timers.has(match.id)) clearTimeout(timers.get(match.id));
-  const to = setTimeout(() => {
-    timers.delete(match.id);
-    handleMatchTimeout(tournament, match);
-  }, ms);
-  timers.set(match.id, to);
-}
-
-// when someone fails to post in time
-async function handleMatchTimeout(tournament, match) {
-  // mark status finished and create a vote between whoever posted vs absent
-  match.status = 'timed_out';
-  // create vote: if one side posted, compare posted vs null => auto-vote between player and absent -> we create a vote where players can choose winner manually
-  const p1 = match.p1;
-  const p2 = match.p2;
-  // find bracketChannel
-  const bracketChannel = config.bracketChannel;
+async function updateRegistrationEmbed(tournament) {
+  if (!tournament.registrationMessageId) return;
   try {
-    const channel = await client.channels.fetch(bracketChannel);
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder().setCustomId(`vote_${match.id}_p1`).setLabel(p1 ? p1.name : 'Player1').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`vote_${match.id}_p2`).setLabel(p2 ? p2.name : 'Player2').setStyle(ButtonStyle.Danger)
-      );
-    const msg = await channel.send({ content: `Match ${match.id} ended due to inactivity. Vote for the winner:`, components: [row] });
-    // create a collector for X minutes (default from config)
-    createVoteCollector(msg, match, tournament, (winnerKey) => {
-      // on finish
-      match.winner = winnerKey; // 'p1' or 'p2'
-      match.status = 'finished';
-      regenerateNextRounds(tournament);
-      saveStorage();
-      updateBracketMessage(tournament); // regenerate image
-    });
-  } catch (e) {
-    console.error('Failed to post timeout vote:', e);
+    const ch = await client.channels.fetch(tournament.channels.registration || config.registrationChannel || config.bracketChannel);
+    const msg = await ch.messages.fetch(tournament.registrationMessageId);
+    const names = tournament.participants.map((p,i)=>`${i+1}. ${p.name}`).join('\n') || 'No participants yet';
+    const embed = msg.embeds[0] ? msg.embeds[0].toJSON() : { title: `${tournament.name} — Registration`, description: `React with ✅ to register.` };
+    embed.fields = [{ name: `Participants (${tournament.participants.length})`, value: names }];
+    await msg.edit({ embeds: [embed] });
+  } catch(e) { console.error('updateRegistrationEmbed error', e); }
+}
+
+function tryRegisterUser(tournament, user) {
+  if (tournament.status!=='registration') return { ok:false, reason:'Registration closed' };
+  if (tournament.maxParticipants && tournament.participants.length>=tournament.maxParticipants) return { ok:false, reason:'Tournament full' };
+  if (tournament.participants.find(p=>p.id===user.id)) return { ok:false, reason:'Already registered' };
+  tournament.participants.push({ id: user.id, name: user.username || user.tag || 'unknown', joinedAt: Date.now() });
+  saveStorage();
+  return { ok:true };
+}
+function tryUnregisterUser(tournament, user) {
+  const idx = tournament.participants.findIndex(p=>p.id===user.id);
+  if (idx===-1) return { ok:false, reason:'Not registered' };
+  tournament.participants.splice(idx,1);
+  saveStorage();
+  return { ok:true };
+}
+
+// assign matches of a round to battle channels and announce
+async function assignRoundToChannels(tournament, roundIndex = 0) {
+  const channels = config.battleChannels || tournament.channels.battleChannels || [];
+  if (!channels || channels.length===0) throw new Error('No battle channels configured');
+  const round = tournament.rounds[roundIndex];
+  const announceChanId = tournament.channels.announce || config.announcementChannel || tournament.channels.bracket || config.bracketChannel;
+  const announceCh = await client.channels.fetch(announceChanId).catch(()=>null);
+  let chanIdx = 0;
+  for (const match of round) {
+    if (!match) continue;
+    // assign channel id if not assigned already
+    if (!match.channelId) {
+      const chId = channels[chanIdx % channels.length];
+      match.channelId = chId;
+      chanIdx++;
+    }
+    // post announcement per match
+    try {
+      if (announceCh) {
+        const p1name = match.p1?match.p1.name:'TBD';
+        const p2name = match.p2?match.p2.name:'TBD';
+        await announceCh.send(`Match ${match.id}: **${p1name}** vs **${p2name}** — Battle will take place in <#${match.channelId}>. <@${match.p1?match.p1.id:''}> <@${match.p2?match.p2.id:''}>`);
+      }
+    } catch(e){ console.error('announce fail', e); }
   }
   saveStorage();
+  await updateBracketMessage(tournament);
 }
 
-// create a collector on a message with two buttons
-function createVoteCollector(message, match, tournament, onFinish) {
-  const filter = (i) => i.isButton();
-  const collector = message.createMessageComponentCollector({ filter, time: (config.defaultVoteDurationMinutes || 60) * 60 * 1000 });
+// createBattleChannelForMatch: will only create channel if you gave category but we also support pre-configured "battleChannels" so we won't always create
+async function createBattleChannelForMatch(guild, match) {
+  // If config.battleChannels includes explicit channels, we don't create new channels
+  if (config.battleChannels && config.battleChannels.length>0) {
+    // simply return a fake "channel" object reference by channel id
+    const chId = match.channelId || config.battleChannels[0];
+    return { id: chId, send: async (m)=> { const ch = await client.channels.fetch(chId); return ch.send(m); } };
+  }
+  const categoryId = config.battleCategory || (match.tournament && match.tournament.channels && match.tournament.channels.battleCategory) || null;
+  const channelName = `battle-${match.id.toLowerCase()}`.replace(/[^a-z0-9-]/g,'-').slice(0,90);
+  try {
+    const ch = await guild.channels.create({ name: channelName, type: 0, parent: categoryId || null });
+    await ch.send(`Match ${match.id} — ${match.p1?match.p1.name:'TBD'} vs ${match.p2?match.p2.name:'TBD'}\nOrganizer will start/end match only.`);
+    return ch;
+  } catch (e) {
+    console.error('createBattleChannelForMatch error', e);
+    return null;
+  }
+}
 
-  const votes = new Map();
-  collector.on('collect', async (i) => {
-    const id = i.user.id;
-    // single vote per user
-    if (votes.has(id)) {
-      await i.reply({ content: 'You already voted.', ephemeral: true });
+// voting helper: posts voting message to configured vote channel or match channel
+async function postVoteForMatch(tournament, match) {
+  const voteChanId = tournament.channels.vote || config.voteChannel || match.channelId;
+  if (!voteChanId) throw new Error('No vote channel defined');
+  const ch = await client.channels.fetch(voteChanId);
+  const p1label = match.p1?match.p1.name:'Player 1';
+  const p2label = match.p2?match.p2.name:'Player 2';
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`vote_${match.id}_p1`).setLabel(p1label).setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`vote_${match.id}_p2`).setLabel(p2label).setStyle(ButtonStyle.Danger)
+  );
+  const m = await ch.send({ content: `Vote for winner of ${match.id}: ${p1label} vs ${p2label}`, components: [row] });
+  // collector (optional) - we will allow button handler to tally saved votes; collector used earlier for temporary
+  // Here, we just post and let button interactions record votes in match.votes
+  return m;
+}
+
+// find match by id
+function findMatchById(tournament, matchId) {
+  for (const rnd of tournament.rounds) {
+    for (const m of rnd) {
+      if (m && m.id === matchId) return { match: m, round: rnd };
+    }
+  }
+  return null;
+}
+
+// reaction based registration
+client.on('messageReactionAdd', async (reaction, user) => {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+    const msg = reaction.message;
+    const tour = Object.values(storage.tournaments).find(t=>t.registrationMessageId === msg.id);
+    if (!tour) return;
+    if (reaction.emoji.name !== '✅') return;
+    const res = tryRegisterUser(tour, user);
+    await updateRegistrationEmbed(tour);
+    if (!res.ok) {
+      try { await user.send(`Registration failed: ${res.reason}`); } catch {}
+    }
+  } catch(e){ console.error('reaction add', e); }
+});
+client.on('messageReactionRemove', async (reaction, user) => {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+    const msg = reaction.message;
+    const tour = Object.values(storage.tournaments).find(t=>t.registrationMessageId === msg.id);
+    if (!tour) return;
+    if (reaction.emoji.name !== '✅') return;
+    const res = tryUnregisterUser(tour, user);
+    await updateRegistrationEmbed(tour);
+    if (!res.ok) {
+      try { await user.send(`Unregister failed: ${res.reason}`); } catch {}
+    }
+  } catch(e){ console.error('reaction remove', e); }
+});
+
+// handle button votes
+client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton()) {
+    const id = interaction.customId;
+    if (!id.startsWith('vote_')) return;
+    const [, matchId, choice] = id.split('_'); // vote_R1M1_p1
+    const t = storage.tournaments[TOURNEY_ID];
+    const found = findMatchById(t, matchId);
+    if (!found) {
+      await interaction.reply({ content: 'Match not found', ephemeral: true });
       return;
     }
-    const [ , mid, choice ] = i.customId.split('_'); // vote_R1M1_p1
-    votes.set(id, choice);
-    await i.reply({ content: `Vote received for ${choice}`, ephemeral: true });
-  });
-
-  collector.on('end', async () => {
-    // tally
-    const tally = { p1: 0, p2: 0 };
-    for (const v of votes.values()) {
-      if (v === 'p1') tally.p1++;
-      if (v === 'p2') tally.p2++;
+    const match = found.match;
+    match.votes = match.votes || {};
+    if (match.votes[interaction.user.id]) {
+      await interaction.reply({ content: 'You already voted', ephemeral: true });
+      return;
     }
-    let winnerKey = null;
-    if (tally.p1 > tally.p2) winnerKey = 'p1';
-    else if (tally.p2 > tally.p1) winnerKey = 'p2';
-    else winnerKey = 'p1'; // default tiebreaker: p1
+    match.votes[interaction.user.id] = choice;
+    await interaction.reply({ content: `Vote recorded for ${choice}`, ephemeral: true });
+    saveStorage();
+    return;
+  }
+
+  if (!interaction.isChatInputCommand()) return;
+
+  const t = storage.tournaments[TOURNEY_ID];
+
+  // LEGACY quick register/unregister
+  if (interaction.commandName === 'register') {
+    if (t.status !== 'registration') return interaction.reply({ content:'Registration is closed.', ephemeral:true });
+    if (t.participants.find(p=>p.id===interaction.user.id)) return interaction.reply({ content:'Already registered', ephemeral:true });
+    t.participants.push({ id: interaction.user.id, name: interaction.member.displayName || interaction.user.username, joinedAt: Date.now()});
+    saveStorage();
+    await interaction.reply({ content:'Registered', ephemeral:true});
+    await updateRegistrationEmbed(t);
+    return;
+  }
+  if (interaction.commandName === 'unregister') {
+    if (t.status !== 'registration') return interaction.reply({ content:'Cannot unregister now', ephemeral:true});
+    const idx = t.participants.findIndex(p=>p.id===interaction.user.id);
+    if (idx===-1) return interaction.reply({ content:'You are not registered', ephemeral:true});
+    t.participants.splice(idx,1); saveStorage(); await updateRegistrationEmbed(t);
+    return interaction.reply({ content:'Unregistered', ephemeral:true});
+  }
+
+  // create_tournament
+  if (interaction.commandName === 'create_tournament') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers can create tournaments', ephemeral:true });
+    const name = interaction.options.getString('name');
+    const bracket_channel = interaction.options.getString('bracket_channel') || '';
+    const registration_channel = interaction.options.getString('registration_channel') || '';
+    const battle_category = interaction.options.getString('battle_category') || '';
+    const announce_channel = interaction.options.getString('announce_channel') || '';
+    const vote_channel = interaction.options.getString('vote_channel') || '';
+    const maxP = interaction.options.getInteger('max_participants') || 0;
+    const id = `t_${Date.now()}`;
+    storage.tournaments[id] = {
+      id, name, status:'registration', participants:[], rounds:[], size:0, registrationMessageId:null, bracketMessageId:null,
+      channels: { bracket: bracket_channel, registration: registration_channel, battleCategory: battle_category, announce: announce_channel, vote: vote_channel },
+      maxParticipants: maxP, createdAt: Date.now()
+    };
+    saveStorage();
+    return interaction.reply({ content:`Created tournament **${name}** (id: ${id}). Use /post_registration on it.`, ephemeral:true });
+  }
+
+  // post_registration
+  if (interaction.commandName === 'post_registration') {
+    const tour = storage.tournaments['current'] || Object.values(storage.tournaments).slice(-1)[0];
+    if (!tour) return interaction.reply({ content:'No tournament found', ephemeral:true});
     try {
-      await message.channel.send(`Voting ended. Results: p1=${tally.p1}, p2=${tally.p2}. Winner: ${winnerKey}`);
-    } catch (e) {}
-    if (onFinish) onFinish(winnerKey);
-  });
+      const msg = await postRegistrationEmbed(tour);
+      await updateRegistrationEmbed(tour);
+      return interaction.reply({ content:`Posted registration in <#${tour.channels.registration || config.registrationChannel || config.bracketChannel}>`, ephemeral:true});
+    } catch (e) {
+      return interaction.reply({ content:`Failed to post registration: ${e.message}`, ephemeral:true});
+    }
+  }
+
+  // open_registration (alias)
+  if (interaction.commandName === 'open_registration') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const tour = storage.tournaments['current'] || Object.values(storage.tournaments).slice(-1)[0];
+    if (!tour) return interaction.reply({ content:'No tournament found', ephemeral:true});
+    tour.status = 'registration'; saveStorage();
+    if (!tour.registrationMessageId) { try { await postRegistrationEmbed(tour); } catch(e){ console.error(e); } }
+    await updateRegistrationEmbed(tour);
+    return interaction.reply({ content:`Registration opened for ${tour.name}`, ephemeral:true });
+  }
+
+  // close_registration -> build bracket + assign channels (organizer)
+  if (interaction.commandName === 'close_registration') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const tour = storage.tournaments['current'] || Object.values(storage.tournaments).slice(-1)[0];
+    if (!tour) return interaction.reply({ content:'No tournament found', ephemeral:true });
+    if (tour.participants.length < 2) return interaction.reply({ content:'Not enough participants (min 2).', ephemeral:true });
+    tour.status = 'running';
+    buildInitialBracket(tour);
+    regenerateNextRounds(tour);
+    // assign matches to battle channels (based on config.battleChannels)
+    try { await assignRoundToChannels(tour, 0); } catch(e){ console.error('assignRoundToChannels error', e); }
+    saveStorage();
+    await updateBracketMessage(tour);
+    return interaction.reply({ content:`Registration closed. Bracket built and matches assigned.`, ephemeral:false });
+  }
+
+  // set_channels (update config)
+  if (interaction.commandName === 'set_channels') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const bracket = interaction.options.getString('bracket_channel');
+    const registration = interaction.options.getString('registration_channel');
+    const battleCategory = interaction.options.getString('battle_category');
+    const announce = interaction.options.getString('announce_channel');
+    const vote = interaction.options.getString('vote_channel');
+    if (bracket) config.bracketChannel = bracket;
+    if (registration) config.registrationChannel = registration;
+    if (battleCategory) config.battleCategory = battleCategory;
+    if (announce) config.announcementChannel = announce;
+    if (vote) config.voteChannel = vote;
+    saveConfig();
+    return interaction.reply({ content:'Channels updated.', ephemeral:true });
+  }
+
+  // set_battle_channels (comma separated)
+  if (interaction.commandName === 'set_battle_channels') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const csv = interaction.options.getString('channels');
+    config.battleChannels = csv.split(',').map(s=>s.trim()).filter(Boolean);
+    saveConfig();
+    return interaction.reply({ content:`Battle channels set: ${config.battleChannels.join(', ')}`, ephemeral:true });
+  }
+
+  // set_organizer_roles
+  if (interaction.commandName === 'set_organizer_roles') {
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) return interaction.reply({ content:'Manage Server required', ephemeral:true });
+    const csv = interaction.options.getString('roles');
+    config.organizerRoleIds = csv.split(',').map(s=>s.trim()).filter(Boolean);
+    saveConfig();
+    return interaction.reply({ content:`Organizer roles set.`, ephemeral:true });
+  }
+
+  // assign_fixtures manual
+  if (interaction.commandName === 'assign_fixtures') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const tour = storage.tournaments['current'] || Object.values(storage.tournaments).slice(-1)[0];
+    if (!tour || !tour.rounds || !tour.rounds.length) return interaction.reply({ content:'No bracket available.', ephemeral:true });
+    try { await assignRoundToChannels(tour, 0); saveStorage(); await updateBracketMessage(tour); return interaction.reply({ content:'Assignments done.', ephemeral:true }); } catch(e){ console.error(e); return interaction.reply({ content:'Failed to assign', ephemeral:true }); }
+  }
+
+  // end_match - organizer only
+  if (interaction.commandName === 'end_match') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const matchId = interaction.options.getString('match_id');
+    const winner = interaction.options.getString('winner');
+    const tour = storage.tournaments['current'] || Object.values(storage.tournaments).slice(-1)[0];
+    const found = findMatchById(tour, matchId);
+    if (!found) return interaction.reply({ content:'Match not found', ephemeral:true });
+    const match = found.match;
+    if (winner !== 'p1' && winner !== 'p2') return interaction.reply({ content:'Invalid winner. Use p1 or p2', ephemeral:true });
+    match.winner = winner; match.status = 'finished';
+    regenerateNextRounds(tour); saveStorage(); await updateBracketMessage(tour);
+    // announce
+    const announceChId = tour.channels.announce || config.announcementChannel || tour.channels.bracket || config.bracketChannel;
+    try {
+      const ach = await client.channels.fetch(announceChId);
+      await ach.send(`Match ${match.id} finished. Winner: **${match[winner] ? match[winner].name : winner}**. Next matches will be updated in bracket.`);
+    } catch(e){ console.error('announce fail', e); }
+    return interaction.reply({ content:`Match ${matchId} set to ${winner}`, ephemeral:true });
+  }
+
+  // open_vote - organizer triggers vote posting for match
+  if (interaction.commandName === 'open_vote') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const matchId = interaction.options.getString('match_id');
+    const tour = storage.tournaments['current'] || Object.values(storage.tournaments).slice(-1)[0];
+    const found = findMatchById(tour, matchId);
+    if (!found) return interaction.reply({ content:'Match not found', ephemeral:true });
+    const match = found.match;
+    try {
+      const vm = await postVoteForMatch(tour, match);
+      match.votingMessageId = vm.id;
+      match.status = 'voting';
+      saveStorage();
+      return interaction.reply({ content:`Vote opened in <#${(tour.channels.vote||config.voteChannel||match.channelId)}>`, ephemeral:true });
+    } catch(e){ console.error(e); return interaction.reply({ content:`Failed to open vote: ${e.message}`, ephemeral:true}); }
+  }
+
+  // force_update_bracket
+  if (interaction.commandName === 'force_update_bracket') {
+    const tour = storage.tournaments['current'] || Object.values(storage.tournaments).slice(-1)[0];
+    if (!tour) return interaction.reply({ content:'No tournament found', ephemeral:true });
+    await updateBracketMessage(tour);
+    return interaction.reply({ content:'Bracket updated', ephemeral:true });
+  }
+
+  // legacy set_winner
+  if (interaction.commandName === 'set_winner') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const matchId = interaction.options.getString('match_id');
+    const winner = interaction.options.getString('winner');
+    const found = findMatchById(storage.tournaments[TOURNEY_ID], matchId);
+    if (!found) return interaction.reply({ content:'Match not found', ephemeral:true });
+    const match = found.match;
+    match.winner = winner; match.status = 'finished';
+    regenerateNextRounds(storage.tournaments[TOURNEY_ID]); saveStorage(); await updateBracketMessage(storage.tournaments[TOURNEY_ID]);
+    return interaction.reply({ content:`Winner set`, ephemeral:true });
+  }
+
+  // start_tournament (legacy)
+  if (interaction.commandName === 'start_tournament') {
+    if (!isOrganizer(interaction)) return interaction.reply({ content:'Only organizers', ephemeral:true });
+    const t = storage.tournaments[TOURNEY_ID];
+    if (t.status !== 'registration') return interaction.reply({ content:'Already started', ephemeral:true });
+    if (t.participants.length < 2) return interaction.reply({ content:'Not enough participants', ephemeral:true });
+    t.status = 'running'; buildInitialBracket(t); regenerateNextRounds(t); saveStorage();
+    // auto assign to battle channels if configured
+    try { await assignRoundToChannels(t, 0); } catch(e){console.error(e);}
+    await updateBracketMessage(t);
+    return interaction.reply({ content:`Tournament started with ${t.participants.length} players`, ephemeral:false });
+  }
+
+  // show_bracket
+  if (interaction.commandName === 'show_bracket') {
+    const t0 = storage.tournaments[TOURNEY_ID];
+    if (!t0) return interaction.reply({ content:'No tournament found', ephemeral:true });
+    try {
+      const buf = await drawBracketImage(t0, config.image || {});
+      const att = new AttachmentBuilder(buf, { name: 'bracket.png' });
+      return interaction.reply({ files: [att], ephemeral:false });
+    } catch(e){ console.error(e); return interaction.reply({ content:'Failed to draw bracket', ephemeral:true }); }
+  }
+});
+
+// helper: check if an interaction user is an organizer
+function isOrganizer(interaction) {
+  if (!interaction || !interaction.member) return false;
+  // ManageGuild always allowed
+  if (interaction.member.permissions && interaction.member.permissions.has && interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) return true;
+  // check configured roles
+  const roles = config.organizerRoleIds || [];
+  for (const rid of roles) if (interaction.member.roles.cache.has(rid)) return true;
+  return false;
 }
 
-// builds and uploads bracket image to bracketChannel; stores message id
+// updateBracketMessage uses tournament-specific bracket channel
 async function updateBracketMessage(tournament) {
   try {
     const buf = await drawBracketImage(tournament, config.image || {});
-    const attachment = new AttachmentBuilder(buf, { name: 'bracket.png' });
-    const channel = await client.channels.fetch(config.bracketChannel);
+    const attachment = new AttachmentBuilder(buf, { name:'bracket.png' });
+    const chId = tournament.channels.bracket || config.bracketChannel;
+    if (!chId) return;
+    const channel = await client.channels.fetch(chId);
     if (!channel) return;
-    // if previous message exists, edit it, else send new
     if (tournament.bracketMessageId) {
       try {
         const prev = await channel.messages.fetch(tournament.bracketMessageId);
@@ -289,309 +585,61 @@ async function updateBracketMessage(tournament) {
       tournament.bracketMessageId = sent.id;
     }
     saveStorage();
-  } catch (e) {
-    console.error('Failed to update bracket message:', e);
-  }
+  } catch (e) { console.error('updateBracketMessage error', e); }
 }
 
-// create battle channel for a match inside configured category
-async function createBattleChannelForMatch(guild, match) {
-  try {
-    const categoryId = config.battleCategory;
-    // build channel name safe
-    const p1n = match.p1 ? sanitizeName(match.p1.name) : 'tbd';
-    const p2n = match.p2 ? sanitizeName(match.p2.name) : 'tbd';
-    const channelName = `battle-${match.id.toLowerCase()}`.replace(/[^a-z0-9-]/g, '-').slice(0, 90);
-
-    const channel = await guild.channels.create({
-      name: channelName,
-      type: 0, // GuildText
-      parent: categoryId || null,
-      permissionOverwrites: []
-    });
-
-    // send instructions
-    await channel.send(`Match ${match.id} — ${match.p1 ? match.p1.name : 'TBD'} vs ${match.p2 ? match.p2.name : 'TBD'}\nThis battle is 3 rounds. Each reply resets your opponent's 24-hour timer.\nWhen both finish, bot will create a vote automatically.`);
-    return channel;
-  } catch (e) {
-    console.error('Failed to create battle channel:', e);
-  }
-}
-
-function sanitizeName(name) {
-  if (!name) return 'unknown';
-  return name.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '-').toLowerCase();
-}
-
-// ---------- Interaction handling (slash commands) ----------
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
+// on ready: restore timers (if any) and refresh bracket message
+client.once('ready', async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  // optionally update bracket on boot
   const t = storage.tournaments[TOURNEY_ID];
-
-  if (interaction.commandName === 'register') {
-    if (t.status !== 'registration') {
-      await interaction.reply({ content: 'Registration is closed.', ephemeral: true });
-      return;
-    }
-    const exists = t.participants.find(p => p.id === interaction.user.id);
-    if (exists) {
-      await interaction.reply({ content: 'You are already registered.', ephemeral: true });
-      return;
-    }
-    t.participants.push({ id: interaction.user.id, name: interaction.member.displayName || interaction.user.username, joinedAt: Date.now() });
-    saveStorage();
-    await interaction.reply({ content: 'Registered for the tournament.', ephemeral: true });
-    return;
-  }
-
-  if (interaction.commandName === 'unregister') {
-    if (t.status !== 'registration') {
-      await interaction.reply({ content: 'Cannot unregister now.', ephemeral: true });
-      return;
-    }
-    const idx = t.participants.findIndex(p => p.id === interaction.user.id);
-    if (idx === -1) {
-      await interaction.reply({ content: 'You are not registered.', ephemeral: true });
-      return;
-    }
-    t.participants.splice(idx, 1);
-    saveStorage();
-    await interaction.reply({ content: 'You have been unregistered.', ephemeral: true });
-    return;
-  }
-
-  if (interaction.commandName === 'start_tournament') {
-    // permission check
-    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !interaction.member.roles.cache.some(r => r.name.toLowerCase().includes('organizer'))) {
-      await interaction.reply({ content: 'You must be an organizer or have Manage Server to start.', ephemeral: true });
-      return;
-    }
-    if (t.status !== 'registration') {
-      await interaction.reply({ content: 'Tournament already started or finished.', ephemeral: true });
-      return;
-    }
-    if (t.participants.length < 2) {
-      await interaction.reply({ content: 'Not enough participants (min 2).', ephemeral: true });
-      return;
-    }
-    t.status = 'running';
-    buildInitialBracket(t);
-    saveStorage();
+  if (t && t.rounds && t.rounds.length) {
     await updateBracketMessage(t);
-    await interaction.reply({ content: `Tournament started with ${t.participants.length} participants.`, ephemeral: false });
-
-    // create initial battle channels for round 1 pending matches
-    const guild = interaction.guild;
-    const r1 = t.rounds[0];
-    for (const match of r1) {
-      // if both null skip
-      if (!match.p1 && !match.p2) continue;
-      // create channel
-      const channel = await createBattleChannelForMatch(guild, match);
-      // store channel id in match for reference
-      match.channelId = channel ? channel.id : null;
-      // If someone is BYE -> auto mark winner
-      if (match.p1 && !match.p2) {
-        match.winner = 'p1';
-        match.status = 'finished';
-      } else if (!match.p1 && match.p2) {
-        match.winner = 'p2';
-        match.status = 'finished';
-      } else {
-        match.status = 'pending';
-        // set a first-round deadline only when first message from either posted; otherwise when someone posts we set deadlines
-      }
-    }
-    regenerateNextRounds(t);
-    saveStorage();
-    await updateBracketMessage(t);
-    return;
-  }
-
-  if (interaction.commandName === 'show_bracket') {
-    const buf = await drawBracketImage(t, config.image || {});
-    const attachment = new AttachmentBuilder(buf, { name: 'bracket.png' });
-    await interaction.reply({ files: [attachment], ephemeral: false });
-    return;
-  }
-
-  if (interaction.commandName === 'set_winner') {
-    // simple organizer only command to force-set winner
-    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && !interaction.member.roles.cache.some(r => r.name.toLowerCase().includes('organizer'))) {
-      await interaction.reply({ content: 'You must be an organizer to use this.', ephemeral: true });
-      return;
-    }
-    const matchId = interaction.options.getString('match_id');
-    const winner = interaction.options.getString('winner'); // 'p1' or 'p2'
-    const found = findMatchById(t, matchId);
-    if (!found) {
-      await interaction.reply({ content: 'Match not found.', ephemeral: true });
-      return;
-    }
-    const { match } = found;
-    if (winner !== 'p1' && winner !== 'p2') {
-      await interaction.reply({ content: 'Invalid winner. use p1 or p2', ephemeral: true });
-      return;
-    }
-    match.winner = winner;
-    match.status = 'finished';
-    regenerateNextRounds(t);
-    saveStorage();
-    await updateBracketMessage(t);
-    await interaction.reply({ content: `Winner for ${matchId} set to ${winner}.`, ephemeral: true });
-    return;
   }
 });
 
+// messageCreate listener for battle channel messages
 client.on('messageCreate', async (message) => {
-  // watch for battle channel replies only
   if (!message.guild) return;
   const t = storage.tournaments[TOURNEY_ID];
-  if (t.status !== 'running') return;
-
-  // find match by channel id
+  if (!t || t.status !== 'running') return;
+  // check if message is in a battle channel of any match
   for (const round of t.rounds) {
     for (const match of round) {
       if (!match || !match.channelId) continue;
       if (match.channelId === message.channel.id) {
-        // treat as a round post; if both present then this may be Round 2/3 depending how you structure
-        await handleBattleChannelMessage(t, match, message);
+        // only allow participants to post (others ignored)
+        const uid = message.author.id;
+        if (!((match.p1 && match.p1.id===uid) || (match.p2 && match.p2.id===uid))) return;
+        // alternate posting enforced
+        match.lastPoster = match.lastPoster || null;
+        if (match.lastPoster === uid) {
+          try { await message.reply({ content: 'It is not your turn. Wait for your opponent to reply.', ephemeral: true }); } catch {}
+          return;
+        }
+        match.lastPoster = uid;
+        match.roundCount = (match.roundCount || 0) + 1;
+        match.deadlineTs = Date.now() + (config.roundReplyTimeoutHours || 24) * 60 * 60 * 1000;
+        match.finished = false;
+        saveStorage();
+        // notify
+        const opponentId = (match.p1 && match.p1.id === uid) ? (match.p2 && match.p2.id) : (match.p1 && match.p1.id);
+        try {
+          const ch = await message.channel.send(`Post received from ${message.author.username}. ${opponentId ? `<@${opponentId}>` : ''} you have ${config.roundReplyTimeoutHours || 24} hours to reply.`);
+          setTimeout(()=>ch.delete().catch(()=>{}), 15*1000);
+        } catch(e){}
+        // IMPORTANT: Do NOT auto-end after 3 rounds. Only organizers end match using /end_match or /open_vote.
         return;
       }
     }
   }
 });
 
-async function handleBattleChannelMessage(tournament, match, message) {
-  // store that someone posted and set deadline for opponent
-  // round tracking minimal: we record lastPoster and increment a 'roundCount' property per match
-  match.lastPoster = match.lastPoster || null;
-  match.roundCount = match.roundCount || 0;
-
-  // only participants can post
-  const uid = message.author.id;
-  if (!((match.p1 && match.p1.id === uid) || (match.p2 && match.p2.id === uid))) {
-    // not a combatant, ignore or warn
-    return;
-  }
-
-  // if lastPoster is same as author, ignore (must alternate)
-  if (match.lastPoster === uid) {
-    await message.reply({ content: 'It is not your turn. Wait for your opponent to reply.', ephemeral: true }).catch(()=>{});
-    return;
-  }
-
-  // record posting: increment roundCount only when both posted? Here we treat each alternating post as progressing
-  match.lastPoster = uid;
-  match.roundCount += 1;
-  // set deadline for opponent: now + X hours
-  const timeoutMs = (config.roundReplyTimeoutHours || 24) * 60 * 60 * 1000;
-  match.deadlineTs = Date.now() + timeoutMs;
-  match.finished = false;
-
-  saveStorage();
-
-  // reschedule timer
-  scheduleMatchTimeout(tournament, match, timeoutMs);
-
-  // if roundCount >= 6 (3 rounds each -> 6 posts) then start voting
-  if (match.roundCount >= 6) {
-    // finish match entries and create vote
-    match.status = 'voting';
-    // post vote in bracket channel
-    try {
-      const channel = await client.channels.fetch(config.bracketChannel);
-      const row = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder().setCustomId(`vote_${match.id}_p1`).setLabel(match.p1 ? match.p1.name : 'Player 1').setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId(`vote_${match.id}_p2`).setLabel(match.p2 ? match.p2.name : 'Player 2').setStyle(ButtonStyle.Danger)
-        );
-      const msg = await channel.send({ content: `Voting for match ${match.id}: ${match.p1 ? match.p1.name : 'TBD'} vs ${match.p2 ? match.p2.name : 'TBD'}`, components: [row] });
-      createVoteCollector(msg, match, tournament, (winnerKey) => {
-        match.winner = winnerKey;
-        match.status = 'finished';
-        regenerateNextRounds(tournament);
-        saveStorage();
-        updateBracketMessage(tournament);
-      });
-      // clear deadline timer
-      if (timers.has(match.id)) {
-        clearTimeout(timers.get(match.id));
-        timers.delete(match.id);
-      }
-    } catch (e) {
-      console.error('Failed to post match vote:', e);
-    }
-  } else {
-    // notify channel/opponent of timer
-    const opponentId = (match.p1 && match.p1.id === message.author.id) ? (match.p2 && match.p2.id) : (match.p1 && match.p1.id);
-    try {
-      const ch = await message.channel.send(`Post received from ${message.author.username}. ${opponentId ? `<@${opponentId}>` : ''} you have ${config.roundReplyTimeoutHours || 24} hours to reply.`);
-      // optionally delete this notice later
-      setTimeout(()=>ch.delete().catch(()=>{}), 15*1000);
-    } catch(e){}
-  }
-  saveStorage();
-  updateBracketMessage(tournament);
-}
-
-// helper to find match by id
-function findMatchById(tournament, matchId) {
-  for (const round of tournament.rounds) {
-    for (const match of round) {
-      if (match && match.id === matchId) return { match, round };
-    }
-  }
-  return null;
-}
-
-// respond to button interactions for votes
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton()) return;
-  const id = interaction.customId;
-  if (!id.startsWith('vote_')) return;
-  // id = vote_R1M1_p1
-  const parts = id.split('_');
-  const matchId = parts[1];
-  const choice = parts[2]; // p1/p2
-  const t = storage.tournaments[TOURNEY_ID];
-  const found = findMatchById(t, matchId);
-  if (!found) {
-    await interaction.reply({ content: 'Match not found', ephemeral: true });
-    return;
-  }
-  const match = found.match;
-  // store votes in match.votes: { userId: choice }
-  match.votes = match.votes || {};
-  if (match.votes[interaction.user.id]) {
-    await interaction.reply({ content: 'You already voted', ephemeral: true });
-    return;
-  }
-  match.votes[interaction.user.id] = choice;
-  await interaction.reply({ content: `Vote recorded for ${choice}`, ephemeral: true });
-  saveStorage();
-  // do not close here: collector created earlier will tally
-});
-
-// basic ready
-client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  // restore timers from storage
-  restoreTimers();
-
-  // keep bracket current on startup
-  const t = storage.tournaments[TOURNEY_ID];
-  if (t && t.rounds && t.rounds.length) {
-    updateBracketMessage(t);
-  }
-});
-
-// express keep-alive
+// keep-alive express
 const app = express();
-app.get('/', (req, res) => res.send('Tourney bot alive'));
+app.get('/', (req,res)=>res.send('Tourney bot alive'));
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Keep-alive server listening on ${port}`));
+app.listen(port, ()=>console.log(`Keep-alive on ${port}`));
 
 client.login(process.env.BOT_TOKEN);
 

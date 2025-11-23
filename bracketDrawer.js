@@ -1,18 +1,15 @@
-// bracketDrawer.js
-// Requires: canvas, gifencoder, fs-extra
-const { createCanvas, loadImage } = require('canvas');
-const GIFEncoder = require('gifencoder');
-const fs = require('fs-extra');
-const path = require('path');
+// bracketDrawer.js - simple bracket PNG generator with dark-red theme and gold trophy.
+// Paste into same folder as index.js
+const { createCanvas, registerFont } = require('canvas');
 
-// Default background (the local file path you uploaded; system will convert to URL if needed)
-const DEFAULT_BG_PATH = '/mnt/data/1b4523d7-fce7-48ce-b40f-6c8d8bab5439.png';
+// Optional: register a font if you have one. Otherwise system sans used.
+// registerFont('./assets/OpenSans-Bold.ttf', { family: 'OpenSans' });
 
-// Helpers
-function shortName(name, max = 18) {
-  if (!name) return "—";
-  return name.length > max ? name.slice(0, max - 1) + "…" : name;
+function trimName(name, maxLen = 22){
+  if (!name) return '—';
+  return name.length > maxLen ? name.slice(0, maxLen-1) + '…' : name;
 }
+
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -26,215 +23,125 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
 }
-function getRoundLabel(total, idx, isPrelim) {
-  if (isPrelim) return "Prelims";
-  const names = {
-    1: "Final", 2: "Semifinal", 3: "Quarterfinal",
-    4: "Round of 16", 5: "Round of 32", 6: "Round of 64",
-    7: "Round of 128", 8: "Round of 256"
-  };
-  const remaining = total - idx;
-  return names[remaining] || `Round ${idx + 1}`;
+
+function getRoundLabel(rounds, idx){
+  // map last rounds if possible
+  const total = rounds.length;
+  // if first is Prelims, treat specially
+  if (rounds[idx].isPrelim) return 'Prelims';
+  // last round -> Final
+  if (idx === total - 1) return 'Final';
+  // second last -> Semifinal if small
+  const rem = Math.pow(2, total - idx);
+  if (rem >= 128) return `Round of ${rem}`;
+  if (rem >= 2) return `Round of ${rem}`;
+  return `Round ${idx+1}`;
 }
 
-// Draw small trophy icon (gold) — centered near top
-function drawTrophy(ctx, cx, cy, scale = 1) {
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.scale(scale, scale);
-  // base cup
-  ctx.fillStyle = '#ffd36a';
-  ctx.beginPath();
-  ctx.moveTo(-24, -4);
-  ctx.quadraticCurveTo(0, -30, 24, -4);
-  ctx.lineTo(24, 10);
-  ctx.quadraticCurveTo(0, 18, -24, 10);
-  ctx.closePath();
-  ctx.fill();
-  // stem
-  ctx.beginPath();
-  ctx.rect(-8, 10, 16, 10);
-  ctx.fill();
-  // pedestal
-  ctx.fillStyle = '#b88a2f';
-  ctx.fillRect(-20, 20, 40, 8);
-  // handles
-  ctx.strokeStyle = '#ffd36a';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(-24, -4);
-  ctx.quadraticCurveTo(-48, -12, -40, 12);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(24, -4);
-  ctx.quadraticCurveTo(48, -12, 40, 12);
-  ctx.stroke();
-  ctx.restore();
-}
-
-// Main static renderer
-async function drawBracketImage(tour, cfg = {}) {
-  const settings = Object.assign({
-    width: 1400, height: 900, bgColorTop: '#3a0012', bgColorBottom: '#120008',
-    textColor: '#fff', prelimColor: '#7a2db3', panelBg: 'rgba(70,8,16,0.95)',
-    connectorColor: 'rgba(255,154,179,0.95)', trophyY: 70, bgPath: DEFAULT_BG_PATH
-  }, cfg || {});
-
-  const width = settings.width, height = settings.height;
+async function drawBracketImage(tour, cfg){
+  const width = (cfg && cfg.width) || 1400;
+  const height = (cfg && cfg.height) || 900;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
-  // Background: prefer provided image, otherwise gradient
-  let bgDrawn = false;
-  if (settings.bgPath && (await fs.pathExists(settings.bgPath)).catch(()=>false)) {
-    try {
-      const img = await loadImage(settings.bgPath);
-      // cover mode
-      const scale = Math.max(width / img.width, height / img.height);
-      const w = img.width * scale, h = img.height * scale;
-      ctx.drawImage(img, (width - w) / 2, (height - h) / 2, w, h);
-      bgDrawn = true;
-    } catch (e) { bgDrawn = false; }
-  }
-  if (!bgDrawn) {
-    const g = ctx.createLinearGradient(0, 0, 0, height);
-    g.addColorStop(0, settings.bgColorTop);
-    g.addColorStop(1, settings.bgColorBottom);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, width, height);
-  }
+  // background gradient
+  const grad = ctx.createLinearGradient(0,0,0,height);
+  grad.addColorStop(0, '#3a0710');
+  grad.addColorStop(0.5, '#6b0f16');
+  grad.addColorStop(1, '#210306');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,width,height);
 
-  // Header + trophy
-  ctx.fillStyle = settings.textColor;
-  ctx.font = 'bold 40px Sans-serif';
+  // header
+  ctx.fillStyle = '#fff';
   ctx.textAlign = 'center';
-  ctx.fillText(tour.name || 'TOURNAMENT', width / 2, 48);
-  drawTrophy(ctx, width / 2, settings.trophyY, 1.0);
+  ctx.font = 'bold 34px Sans';
+  const title = tour.name || 'TOURNAMENT';
+  ctx.fillText(title, width/2, 56);
+  ctx.font = '16px Sans';
+  ctx.fillText('LIVE BRACKET', width/2, 84);
+
+  // draw trophy circle
+  ctx.fillStyle = '#ffd36a';
+  ctx.beginPath();
+  ctx.arc(width/2, 110, 28, 0, Math.PI*2);
+  ctx.fill();
+  // small trophy shape (simple)
+  ctx.fillStyle = '#7a4b00';
+  ctx.fillRect(width/2 - 6, 98, 12, 8);
 
   const rounds = tour.rounds || [];
-  if (!rounds.length) {
-    ctx.font = '18px Sans-serif';
-    ctx.fillText('No bracket yet', width / 2, height / 2);
-    return canvas.toBuffer('image/png');
-  }
+  const roundCount = rounds.length || 1;
+  const colWidth = width / Math.max(4, roundCount + 1);
 
-  const cols = rounds.length;
-  const colWidth = width / (cols + 1);
-  for (let r = 0; r < cols; r++) {
-    const round = rounds[r];
-    const matches = round.matches;
-    const x = (r + 1) * colWidth;
-    ctx.fillStyle = settings.textColor;
-    ctx.font = '18px Sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(getRoundLabel(cols, r, round.isPrelim), x, 120);
+  // render rounds
+  rounds.forEach((rnd, rIdx) => {
+    const x = colWidth * (rIdx + 0.6);
+    // label
+    ctx.fillStyle = '#ffd7e0';
+    ctx.font = '18px Sans';
+    ctx.textAlign = 'left';
+    ctx.fillText(getRoundLabel(rounds, rIdx), x - 18, 140);
 
-    const top = 150, bottom = 60;
-    const avail = height - top - bottom;
-    const slotH = avail / matches.length;
+    const matchAreaTop = 160;
+    const matchAreaHeight = height - matchAreaTop - 60;
+    const matches = rnd.matches || [];
+    const matchHeight = Math.max(80, matchAreaHeight / matches.length);
 
-    for (let i = 0; i < matches.length; i++) {
-      const m = matches[i];
-      if (!m) continue;
-      const midY = top + i * slotH + slotH / 2;
-      const boxW = 260, boxH = 46;
-      const bx = x - boxW / 2, by = midY - boxH;
+    matches.forEach((match, mIdx) => {
+      const centerY = matchAreaTop + mIdx * matchHeight + matchHeight / 2;
+      const boxW = 280;
+      const boxH = 44;
+      const bx = x - boxW/2;
+      const by = centerY - boxH;
 
       // panel
-      ctx.fillStyle = round.isPrelim ? settings.prelimColor : settings.panelBg;
-      roundRect(ctx, bx, by, boxW, boxH * 2 + 6, 10);
+      ctx.save();
+      roundRect(ctx, bx, by, boxW, boxH*2 + 8, 10);
+      ctx.fillStyle = 'rgba(60,10,12,0.86)';
       ctx.fill();
-
-      // border
-      ctx.strokeStyle = '#b36b6f';
+      ctx.strokeStyle = '#661017';
       ctx.lineWidth = 2;
-      roundRect(ctx, bx, by, boxW, boxH * 2 + 6, 10);
+      roundRect(ctx, bx, by, boxW, boxH*2 + 8, 10);
       ctx.stroke();
 
       // names
       ctx.fillStyle = '#fff';
-      ctx.font = '15px Sans-serif';
+      ctx.font = '16px Sans';
       ctx.textAlign = 'left';
-      ctx.fillText(shortName(m.p1 && m.p1.name || '—', 24), bx + 12, by + 22);
-      ctx.fillText(shortName(m.p2 && m.p2.name || '—', 24), bx + 12, by + boxH + 22);
+      const n1 = match && match.p1 ? trimName(match.p1.name, 24) : '—';
+      const n2 = match && match.p2 ? trimName(match.p2.name, 24) : '—';
+      ctx.fillText(n1, bx + 12, by + 22);
+      ctx.fillText(n2, bx + 12, by + boxH + 22);
 
       // winner highlight
-      if (m.winner) {
-        ctx.strokeStyle = '#ffd36a'; ctx.lineWidth = 3;
-        const wy = m.winner === 'p1' ? by + 14 : by + boxH + 14;
-        ctx.beginPath(); ctx.moveTo(bx + 8, wy); ctx.lineTo(bx + boxW - 8, wy); ctx.stroke();
-      }
-
-      // connectors
-      if (r < cols - 1) {
-        const nextX = (r + 2) * colWidth;
-        ctx.strokeStyle = settings.connectorColor;
-        ctx.lineWidth = 2;
+      if (match && match.winner) {
+        ctx.strokeStyle = '#ffd36a';
+        ctx.lineWidth = 3;
+        const winY = match.winner === 'p1' ? by + 14 : by + boxH + 14;
         ctx.beginPath();
-        ctx.moveTo(bx + boxW, midY);
-        ctx.lineTo(nextX - boxW / 2, midY);
+        ctx.moveTo(bx + 8, winY);
+        ctx.lineTo(bx + boxW - 8, winY);
         ctx.stroke();
       }
-    }
-  }
 
-  // gold trophy badge at center bottom with glow
-  ctx.save();
-  const badgeX = width / 2, badgeY = 90;
-  // glow
-  for (let i = 10; i > 0; i--) {
-    ctx.beginPath();
-    ctx.fillStyle = `rgba(255,211,106,${0.03 * i})`;
-    ctx.arc(badgeX, badgeY, 22 + i * 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  drawTrophy(ctx, badgeX, badgeY, 1.2);
-  ctx.restore();
+      // connector
+      if (rIdx < rounds.length - 1) {
+        const nextX = colWidth * (rIdx + 1.6);
+        ctx.strokeStyle = 'rgba(255,154,179,0.9)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(bx + boxW, centerY - boxH/2);
+        const midY = centerY;
+        ctx.lineTo(nextX - boxW/2, midY);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  });
 
   return canvas.toBuffer('image/png');
 }
 
-// Animated GIF generator
-// frames: number of frames (default 24), fps: frames per second (default 12)
-async function drawAnimatedBracketGIF(tour, cfg = {}, frames = 30, fps = 12) {
-  const settings = Object.assign({ width: 1400, height: 900 }, cfg || {});
-  const width = settings.width, height = settings.height;
-
-  const encoder = new GIFEncoder(width, height);
-  encoder.start();
-  encoder.setRepeat(0);
-  encoder.setDelay(Math.round(1000 / fps));
-  encoder.setQuality(10);
-
-  // produce each frame by slightly varying glow/connector alpha or sliding highlight
-  for (let f = 0; f < frames; f++) {
-    const t = Math.sin((f / frames) * Math.PI * 2); // -1..1
-    // tweak color intensity for animation
-    const animCfg = Object.assign({}, cfg, {
-      panelBg: `rgba(70,8,16,${0.9 + 0.05 * t})`,
-      prelimColor: `rgba(122,45,179,${0.9 + 0.06 * t})`,
-      connectorColor: `rgba(255,154,179,${0.7 + 0.2 * Math.abs(t)})`,
-      textColor: '#fff',
-      bgPath: settings.bgPath || DEFAULT_BG_PATH
-    });
-    const buf = await drawBracketImage(tour, animCfg);
-    encoder.addFrame(buf);
-  }
-
-  encoder.finish();
-  // GIF data buffer
-  const out = encoder.out.getData();
-  return Buffer.from(out);
-}
-
-module.exports = {
-  drawBracketImage,
-  drawAnimatedBracketGIF: drawAnimatedBracketGIF
-};
-
-
-module.exports = {
-    drawBracketImage
-};
-
+module.exports = { drawBracketImage };
 

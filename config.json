@@ -9,11 +9,10 @@
   "roundReplyTimeoutHours": 24,
   "voteDurationMinutes": 1440,
   "image": {
-    "width": 1600,
+    "width": 1400,
     "height": 900,
     "bgColor": "#2a0710",
-    "textColor": "#ffffff",
-    "prelimColor": "#a85cff"
+    "textColor": "#fff"
   }
 }
 

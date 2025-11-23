@@ -1,3 +1,6 @@
 {
-  "tournaments": {}
+  "tournaments": {},
+  "meta": {
+    "currentTournament": null
+  }
 }
